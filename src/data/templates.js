@@ -34,6 +34,7 @@ export const TEMPLATES = {
 
       noseRockerIn:  4.75,
       tailRockerIn:  2.25,
+      rockerType:    'staged',
       entryRocker:   'moderate',
       exitRocker:    'moderate',
 
@@ -43,9 +44,18 @@ export const TEMPLATES = {
       deckDome:          'medium',
       bottomContour:     'singleConcave',
 
+      // Concave detail - performance single concave
+      concaveDepthNose:   0.03,
+      concaveDepthCenter: 0.15,
+      concaveDepthTail:   0.08,
+      concaveWidth:       0.75,
+      concaveStart:       0.12,
+      concaveFade:        0.90,
+
       railType: 'tucked',
       railApex: 'low',
 
+      noseShape:     'pointed',
       tailShape:     'squash',
       swallowDepthIn: 0,
       finConfig:     'thruster',
@@ -73,6 +83,7 @@ export const TEMPLATES = {
 
       noseRockerIn:  3.75,
       tailRockerIn:  1.75,
+      rockerType:    'staged',
       entryRocker:   'flat',
       exitRocker:    'flat',
 
@@ -82,9 +93,19 @@ export const TEMPLATES = {
       deckDome:          'low',
       bottomContour:     'doubleConcave',
 
+      // Concave detail - double concave for small wave speed
+      concaveDepthNose:   0.02,
+      concaveDepthCenter: 0.12,
+      concaveDepthTail:   0.06,
+      concaveWidth:       0.80,
+      concaveStart:       0.15,
+      concaveFade:        0.88,
+      veeDepth:           0.04,
+
       railType: '50/50',
       railApex: 'medium',
 
+      noseShape:     'pointedRound',
       tailShape:     'squash',
       swallowDepthIn: 0,
       finConfig:     'thruster',
@@ -92,49 +113,58 @@ export const TEMPLATES = {
   },
 
   // ─── FISH ──────────────────────────────────────────────────────────────
-  // Reference: Lost Puddle Fish, CI Happy, Stretch Quad, Rusty Dwart
-  // Modern fish: wide point near center (2" forward). Wide nose, flat rocker,
-  // full rails, swallow tail. Classic Steve Lis puts WP further forward.
+  // Reference: Steve Lis fish, Christenson fish (Swaylocks specs)
+  // Classic fish: wide point at/near center, wide nose, flat rocker,
+  // soft 50/50 rails, deep swallow tail.
   fish: {
     id: 'fish',
     name: 'Fish',
-    description: 'Modern fish design. Wide body, flat rocker, full nose and tail. Wide point near center gives paddle power and drive in small, mushy surf.',
+    description: 'Classic twin-fin fish. Wide body, flat rocker, 50/50 rails. Deep swallow tail for drive in small surf.',
     emoji: '🐟',
     boardType: 'fish',
     params: {
-      lengthFt: 5, lengthIn_extra: 6,   // 5'6" = 66"
+      lengthFt: 5, lengthIn_extra: 8,   // 5'8" = 68"
       widthIn: 21.0,
       thicknessIn: 2.5,
 
-      // Wide point 2" forward of center: center=33", WP=31" (47% of 66")
-      // Nose 12" reference is a separate measurement — 14" is typical for a 21" wide fish
-      noseWidthIn:      14.0,   // 21.0 × 0.667 — wide but not at max width
-      widePointIn:      31,     // 47% of 66" — just forward of center
+      // Fish outline: wide nose, wide tail, wide point near center
+      // Based on Swaylocks: nose ~11-12" at 12" from tip for 18-21" wide board
+      noseWidthIn:      13.5,   // ~64% of max width
+      widePointIn:      32,     // 47% from nose (2" forward of center)
       widePointWidthIn: 21.0,
-      tailWidthIn:      15.5,   // 21.0 × 0.738 = 15.5"
+      tailWidthIn:      14.5,   // ~69% - wide tail for swallow wings
 
-      // Hallmark flat rocker
-      noseRockerIn:  3.25,
+      // Flat rocker - hallmark of fish
+      noseRockerIn:  3.0,
       tailRockerIn:  1.25,
+      rockerType:    'staged',
       entryRocker:   'flat',
       exitRocker:    'flat',
 
-      // Thick through the tail — fish carry volume
+      // Thick tail for float and planing
       noseThicknessIn:   2.0,
       centerThicknessIn: 2.5,
-      tailThicknessIn:   2.125,
+      tailThicknessIn:   2.25,
       deckDome:          'flat',
       bottomContour:     'flat',
 
-      // Fuller, softer rails
+      // Concave detail - flat bottom (classic fish)
+      concaveDepthNose:   0,
+      concaveDepthCenter: 0,
+      concaveDepthTail:   0,
+
+      // Classic 50/50 rails
       railType: '50/50',
       railApex: 'medium',
 
-      // Deep swallow — the visual signature of a fish
+      // Deep swallow - Swaylocks formula: tip-to-tip × 0.49
+      // 14.5" tail × 0.49 ≈ 7" deep (classic), using 5" for modern
       tailShape:     'swallow',
-      swallowDepthIn: 3.5,
+      swallowDepthIn: 5.0,
 
-      // Classic twin fin
+      noseShape:     'round',
+
+      // Twin keel fins
       finConfig: 'twin',
     }
   },
@@ -160,6 +190,7 @@ export const TEMPLATES = {
 
       noseRockerIn:  4.0,
       tailRockerIn:  2.0,
+      rockerType:    'continuous',
       entryRocker:   'moderate',
       exitRocker:    'flat',
 
@@ -169,9 +200,18 @@ export const TEMPLATES = {
       deckDome:          'low',
       bottomContour:     'singleConcave',
 
+      // Concave detail - mild single concave
+      concaveDepthNose:   0.02,
+      concaveDepthCenter: 0.10,
+      concaveDepthTail:   0.05,
+      concaveWidth:       0.70,
+      concaveStart:       0.18,
+      concaveFade:        0.85,
+
       railType: '50/50',
       railApex: 'medium',
 
+      noseShape:     'round',
       tailShape:     'round',
       swallowDepthIn: 0,
       finConfig:     '2+1',
@@ -199,6 +239,7 @@ export const TEMPLATES = {
 
       noseRockerIn:  2.5,       // Very flat
       tailRockerIn:  2.0,
+      rockerType:    'continuous',
       entryRocker:   'flat',
       exitRocker:    'flat',
 
@@ -208,9 +249,15 @@ export const TEMPLATES = {
       deckDome:          'flat',
       bottomContour:     'flat',
 
+      // Concave detail - flat bottom (classic longboard)
+      concaveDepthNose:   0,
+      concaveDepthCenter: 0,
+      concaveDepthTail:   0,
+
       railType: 'soft',
       railApex: 'high',
 
+      noseShape:     'round',
       tailShape:     'square',
       swallowDepthIn: 0,
       finConfig:     'single',
@@ -238,6 +285,7 @@ export const TEMPLATES = {
 
       noseRockerIn:  5.5,       // Aggressive nose rocker for steep drops
       tailRockerIn:  2.25,
+      rockerType:    'continuous',
       entryRocker:   'aggressive',
       exitRocker:    'flat',
 
@@ -247,9 +295,19 @@ export const TEMPLATES = {
       deckDome:          'medium',
       bottomContour:     'vee',
 
+      // Concave detail - vee for control at speed
+      concaveDepthNose:   0,
+      concaveDepthCenter: 0,
+      concaveDepthTail:   0,
+      veeDepth:           0.10,
+      veeAngle:           4.5,
+      concaveStart:       0.40,
+      concaveFade:        0.95,
+
       railType: 'pinched',
       railApex: 'low',
 
+      noseShape:     'pointed',
       tailShape:     'pin',
       swallowDepthIn: 0,
       finConfig:     'thruster',

@@ -6,6 +6,7 @@
 
 import { useState, useCallback } from 'react';
 import { validateParam, detectBoardType, autoSuggest, BOARD_CONSTRAINTS } from '../data/constraints';
+import { REFERENCE_OUTLINES, lerpRefCurve } from '../geometry/surfboardGeometry';
 
 // ─── Status indicator dot ────────────────────────────────────────────────────
 const STATUS_COLOR = {
@@ -190,25 +191,79 @@ function BoardTypeTag({ boardType, constraints }) {
   );
 }
 
+// Parameter → ideal view mapping
+const PARAM_VIEW_MAP = {
+  // Rocker params → side view
+  noseRockerIn: 'side',
+  tailRockerIn: 'side',
+  rockerType: 'side',
+  entryRocker: 'side',
+  exitRocker: 'side',
+
+  // Concave zones → concave view (underneath)
+  concaveZones: 'concave',
+
+  // Rail params → rails view (angled)
+  railType: 'rails',
+  railApex: 'rails',
+
+  // Thickness params → side or rails view
+  noseThicknessIn: 'side',
+  centerThicknessIn: 'rails',
+  tailThicknessIn: 'side',
+  deckDome: 'rails',
+
+  // Tail shape → tail view
+  tailShape: 'tail',
+  swallowDepthIn: 'tail',
+
+  // Nose shape → nose view
+  noseShape: 'nose',
+
+  // Outline params → top view
+  widePointIn: 'top',
+  widePointWidthIn: 'top',
+  noseWidth1: 'top',
+  noseWidth3: 'top',
+  noseWidth6: 'top',
+  noseWidth12: 'top',
+  noseWidth18: 'top',
+  noseWidth24: 'top',
+  tailWidth1: 'top',
+  tailWidth3: 'top',
+  tailWidth6: 'top',
+  tailWidth12: 'top',
+  tailWidth18: 'top',
+  tailWidth24: 'top',
+};
+
 // ─── Main panel ──────────────────────────────────────────────────────────────
-export default function ParameterPanel({ params, onChange }) {
+export default function ParameterPanel({ params, onChange, onViewChange }) {
   const [pendingSuggestions, setPendingSuggestions] = useState([]);
 
   const L = params.lengthFt * 12 + (params.lengthIn_extra || 0);
   const boardType = detectBoardType(params);
   const C = BOARD_CONSTRAINTS[boardType];
 
-  // Change a param and check for auto-suggestions
+  // Change a param, auto-switch view, and check for suggestions
   const set = useCallback((key, value) => {
     const next = { ...params, [key]: value };
     next.lengthIn = next.lengthFt * 12 + (next.lengthIn_extra || 0);
     if (key === 'thicknessIn') next.centerThicknessIn = value;
     onChange(next);
 
+    // Auto-switch to ideal view for this parameter
+    if (onViewChange && PARAM_VIEW_MAP[key]) {
+      onViewChange(PARAM_VIEW_MAP[key]);
+    }
+
     // Auto-suggest related param changes
     const suggestions = autoSuggest(boardType, key, value, next);
     if (suggestions.length > 0) setPendingSuggestions(suggestions);
-  }, [params, onChange, boardType]);
+  }, [params, onChange, onViewChange, boardType]);
+
+  // Alias for outline params (no longer needs special handling)
+  const setOutline = set;
 
   const applyAll = () => {
     const next = { ...params };
@@ -271,19 +326,19 @@ export default function ParameterPanel({ params, onChange }) {
           }}
         />
         <Slider
-          label="Max Width"
+          label="Width"
           value={params.widthIn}
-          min={16} max={26} step={0.125}
-          unit='"'
+          min={16} max={26} step={0.01}
+          displayValue={`${params.widthIn.toFixed(2)}"`}
           status={wvWidth.status}
           statusMsg={wvWidth.message}
           onChange={v => set('widthIn', v)}
         />
         <Slider
-          label="Max Thickness"
+          label="Thickness"
           value={params.thicknessIn}
-          min={1.75} max={4} step={0.0625}
-          unit='"'
+          min={1.75} max={4} step={0.01}
+          displayValue={`${params.thicknessIn.toFixed(2)}"`}
           status={wvThick.status}
           statusMsg={wvThick.message}
           onChange={v => set('thicknessIn', v)}
@@ -293,40 +348,74 @@ export default function ParameterPanel({ params, onChange }) {
       {/* ── OUTLINE SHAPE ───────────────────────────────────────── */}
       <Section title="Outline Shape" badge={outlineBadge}>
         <Slider
-          label="Wide Point — position from nose"
+          label="Wide Point"
           value={params.widePointIn}
           min={8} max={Math.max(L - 14, 20)}
-          step={1}
-          displayValue={`${params.widePointIn}" (${wpPct}% from nose)`}
+          step={0.01}
+          displayValue={`${params.widePointIn.toFixed(2)}" (${wpPct}% from nose)`}
           status={wvWP.status}
           statusMsg={wvWP.message || wpIdealRange}
-          onChange={v => set('widePointIn', v)}
+          onChange={v => setOutline('widePointIn', v)}
         />
         <Slider
-          label="Wide Point — max width"
+          label="Max Width"
           value={params.widePointWidthIn}
-          min={16} max={26} step={0.125}
-          unit='"'
-          onChange={v => set('widePointWidthIn', v)}
+          min={16} max={26} step={0.01}
+          displayValue={`${params.widePointWidthIn.toFixed(2)}"`}
+          onChange={v => setOutline('widePointWidthIn', v)}
         />
-        <Slider
-          label="Nose Width (at 12\u2033)"
-          value={params.noseWidthIn}
-          min={8} max={23} step={0.125}
-          unit='"'
-          status={wvNose.status}
-          statusMsg={wvNose.message}
-          onChange={v => set('noseWidthIn', v)}
-        />
-        <Slider
-          label="Tail Width (at 12\u2033)"
-          value={params.tailWidthIn}
-          min={9} max={22} step={0.125}
-          unit='"'
-          status={wvTail.status}
-          statusMsg={wvTail.message}
-          onChange={v => set('tailWidthIn', v)}
-        />
+      </Section>
+
+      {/* ── OUTLINE STATIONS ────────────────────────────────────── */}
+      <Section title="Outline Stations" defaultOpen={false}>
+        <div style={{
+          fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 8, lineHeight: 1.5,
+        }}>
+          Width at stations from nose and tail. Defaults from reference curve for this board type.
+        </div>
+
+        {/* Nose stations */}
+        <div style={{ fontSize: 10, color: '#4488cc', fontWeight: 600, marginBottom: 6, marginTop: 8 }}>
+          FROM NOSE
+        </div>
+        {[1, 3, 6, 12, 18, 24].map(station => {
+          const key = `noseWidth${station}`;
+          const refCurve = REFERENCE_OUTLINES[boardType] || REFERENCE_OUTLINES.midLength;
+          const refVal = lerpRefCurve(refCurve, station / L) * params.widePointWidthIn;
+          const val = params[key] ?? refVal;
+          return (
+            <Slider
+              key={key}
+              label={`${station}"`}
+              value={val}
+              min={2} max={params.widePointWidthIn} step={0.01}
+              displayValue={`${val.toFixed(2)}"`}
+              onChange={v => setOutline(key, v)}
+            />
+          );
+        })}
+
+        {/* Tail stations — 1/3/6" are inside the tail curve zone so only 12/18/24 are shown */}
+        <div style={{ fontSize: 10, color: '#44aa88', fontWeight: 600, marginBottom: 6, marginTop: 12 }}>
+          FROM TAIL
+        </div>
+        {[12, 18, 24].map(station => {
+          const refCurve = REFERENCE_OUTLINES[boardType] || REFERENCE_OUTLINES.midLength;
+          const refVal = lerpRefCurve(refCurve, (L - station) / L) * params.widePointWidthIn;
+          // station 12 maps to tailWidthIn (what the geometry reads for tail curve scaling)
+          const key = station === 12 ? 'tailWidthIn' : `tailWidth${station}`;
+          const val = params[key] ?? refVal;
+          return (
+            <Slider
+              key={key}
+              label={`${station}"`}
+              value={val}
+              min={2} max={params.widePointWidthIn} step={0.01}
+              displayValue={`${val.toFixed(2)}"`}
+              onChange={v => setOutline(key, v)}
+            />
+          );
+        })}
       </Section>
 
       {/* ── ROCKER ──────────────────────────────────────────────── */}
@@ -339,8 +428,8 @@ export default function ParameterPanel({ params, onChange }) {
         <Slider
           label="Nose rocker"
           value={params.noseRockerIn}
-          min={0.5} max={8} step={0.125}
-          unit='"'
+          min={0.5} max={8} step={0.01}
+          displayValue={`${params.noseRockerIn.toFixed(2)}"`}
           status={wvNR.status}
           statusMsg={wvNR.message}
           onChange={v => set('noseRockerIn', v)}
@@ -348,22 +437,28 @@ export default function ParameterPanel({ params, onChange }) {
         <Slider
           label="Tail rocker"
           value={params.tailRockerIn}
-          min={0.5} max={5} step={0.125}
-          unit='"'
+          min={0.5} max={5} step={0.01}
+          displayValue={`${params.tailRockerIn.toFixed(2)}"`}
           status={wvTR.status}
           statusMsg={wvTR.message}
           onChange={v => set('tailRockerIn', v)}
         />
         <Select
-          label="Entry curve (nose)"
+          label="Rocker Type"
+          value={params.rockerType || 'continuous'}
+          options={[['continuous','Continuous — smooth curve, responsive'],['staged','Staged — flat middle, flip & kick']]}
+          onChange={v => set('rockerType', v)}
+        />
+        <Select
+          label="Entry Curve"
           value={params.entryRocker}
-          options={[['flat','Flat — speed & trim'],['moderate','Moderate — versatile'],['aggressive','Aggressive — steep drops']]}
+          options={[['flat','Flat — late flip, speed'],['moderate','Moderate — balanced'],['aggressive','Aggressive — early flip, steep drops']]}
           onChange={v => set('entryRocker', v)}
         />
         <Select
-          label="Exit curve (tail)"
+          label="Exit Curve"
           value={params.exitRocker}
-          options={[['flat','Flat — drive & speed'],['moderate','Moderate — balanced'],['aggressive','Aggressive — pivoty']]}
+          options={[['flat','Flat — late kick, drive'],['moderate','Moderate — balanced'],['aggressive','Aggressive — early kick, pivoty']]}
           onChange={v => set('exitRocker', v)}
         />
       </Section>
@@ -371,24 +466,24 @@ export default function ParameterPanel({ params, onChange }) {
       {/* ── FOIL & THICKNESS ────────────────────────────────────── */}
       <Section title="Foil & Thickness" defaultOpen={false}>
         <Slider
-          label="Nose thickness (at 12\u2033)"
+          label="Nose Thickness"
           value={params.noseThicknessIn}
-          min={0.5} max={2.75} step={0.0625}
-          unit='"'
+          min={0.5} max={2.75} step={0.01}
+          displayValue={`${params.noseThicknessIn.toFixed(2)}"`}
           onChange={v => set('noseThicknessIn', v)}
         />
         <Slider
-          label="Center thickness"
+          label="Center Thickness"
           value={params.centerThicknessIn}
-          min={1.5} max={4.5} step={0.0625}
-          unit='"'
+          min={1.5} max={4.5} step={0.01}
+          displayValue={`${params.centerThicknessIn.toFixed(2)}"`}
           onChange={v => set('centerThicknessIn', v)}
         />
         <Slider
-          label="Tail thickness (at 12\u2033)"
+          label="Tail Thickness"
           value={params.tailThicknessIn}
-          min={0.5} max={3.25} step={0.0625}
-          unit='"'
+          min={0.5} max={3.25} step={0.01}
+          displayValue={`${params.tailThicknessIn.toFixed(2)}"`}
           onChange={v => set('tailThicknessIn', v)}
         />
         <Select
@@ -397,18 +492,34 @@ export default function ParameterPanel({ params, onChange }) {
           options={[['flat','Flat'],['low','Low dome'],['medium','Medium dome'],['high','High dome']]}
           onChange={v => set('deckDome', v)}
         />
-        <Select
-          label="Bottom contour"
-          value={params.bottomContour}
-          options={[
-            ['flat','Flat — drive & speed'],
-            ['singleConcave','Single Concave — lift & speed'],
-            ['doubleConcave','Double Concave — loose & quick'],
-            ['vee','Vee — pivot & control'],
-            ['channels','Channels — grip & drive'],
-          ]}
-          onChange={v => set('bottomContour', v)}
-        />
+      </Section>
+
+      {/* ── BOTTOM CONTOUR ──────────────────────────────────────────── */}
+      <Section title="Bottom Contour" defaultOpen={false}>
+        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', marginBottom: 10, lineHeight: 1.5 }}>
+          Define concave zones directly in the 3D view. Click the button below to switch to concave view and edit zones.
+        </div>
+        <button
+          onClick={() => onViewChange && onViewChange('concave')}
+          style={{
+            width: '100%',
+            padding: '10px 14px',
+            borderRadius: 6,
+            border: '1px solid rgba(68,136,204,0.4)',
+            background: 'linear-gradient(135deg, rgba(68,136,204,0.2), rgba(68,136,204,0.1))',
+            color: '#4488cc',
+            fontSize: 11,
+            fontWeight: 700,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+          }}
+        >
+          <span style={{ fontSize: 14 }}>🎨</span>
+          Edit Concave Zones in 3D View
+        </button>
       </Section>
 
       {/* ── RAILS ────────────────────────────────────────────────── */}
@@ -433,28 +544,46 @@ export default function ParameterPanel({ params, onChange }) {
         />
       </Section>
 
-      {/* ── TAIL & FINS ──────────────────────────────────────────── */}
-      <Section title="Tail & Fins" defaultOpen={false}>
+      {/* ── NOSE, TAIL & FINS ─────────────────────────────────────── */}
+      <Section title="Nose, Tail & Fins" defaultOpen={false}>
+        <Select
+          label="Nose shape"
+          value={params.noseShape || 'round'}
+          options={[
+            ['round',       'Round — stable, easy paddle, forgiving'],
+            ['pointedRound','Pointed Round — balanced, versatile'],
+            ['pointed',     'Pointed — precision, high performance'],
+            ['asymmetrical','Asymmetrical — custom, experimental'],
+          ]}
+          onChange={v => set('noseShape', v)}
+        />
         <Select
           label="Tail shape"
           value={params.tailShape}
           options={[
-            ['squash', 'Squash — most versatile'],
-            ['round',  'Round — smooth, flowing turns'],
-            ['pin',    'Pin — big wave hold'],
-            ['swallow','Swallow — drive + pivoty in small surf'],
-            ['fish',   'Fish tail — retro, wide & loose'],
-            ['square', 'Square — longboard classic'],
-            ['diamond','Diamond — specialty'],
+            ['squash',       'Squash — most common, versatile'],
+            ['roundPin',     'Round Pin — all-rounder, step-ups'],
+            ['round',        'Round — smooth, flowing turns'],
+            ['pin',          'Pin — big wave hold'],
+            ['square',       'Square — longboard classic'],
+            ['roundedSquare','Rounded Square — blend of square & squash'],
+            ['swallow',      'Swallow — drive + release in small surf'],
+            ['fish',         'Fish Tail — retro twin-fin, wide & loose'],
+            ['diamond',      'Diamond — angular, specialty'],
+            ['bat',          'Bat — aggressive wings, loose'],
+            ['wingedSwallow','Winged Swallow — swallow with wing bumps'],
+            ['wingedSquash', 'Winged Squash — squash with wing bumps'],
+            ['wingedRound',  'Winged Round — round with wing bumps'],
+            ['roundedDiamond','Rounded Diamond — softer diamond'],
           ]}
           onChange={v => set('tailShape', v)}
         />
-        {(params.tailShape === 'swallow' || params.tailShape === 'fish') && (
+        {['swallow', 'fish', 'wingedSwallow'].includes(params.tailShape) && (
           <Slider
-            label="Swallow depth"
+            label="Swallow Depth"
             value={params.swallowDepthIn || 2}
-            min={1} max={5} step={0.125}
-            unit='"'
+            min={1} max={5} step={0.01}
+            displayValue={`${(params.swallowDepthIn || 2).toFixed(2)}"`}
             status={v('swallowDepthIn', params.swallowDepthIn).status}
             statusMsg={v('swallowDepthIn', params.swallowDepthIn).message}
             onChange={val => set('swallowDepthIn', val)}

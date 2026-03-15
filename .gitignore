@@ -1,3 +1,7 @@
+# Generated / temp
+src.zip
+tmp-frames/
+
 # Logs
 logs
 *.log

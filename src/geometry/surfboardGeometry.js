@@ -23,13 +23,16 @@ export function inchesToMeters(i) { return i * 0.0254; }
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const REFERENCE_OUTLINES = {
+  // Fish: PARALLEL rails behind wide point - key fish characteristic
+  // Wide point at/near center, then stays wide all the way to swallow wings
+  // Only tapers in last ~3" for the wing tips
   fish: [
     {t:0.000, w:0.08}, {t:0.015, w:0.22}, {t:0.03, w:0.36}, {t:0.05, w:0.50},
     {t:0.07, w:0.60}, {t:0.09, w:0.68}, {t:0.12, w:0.78}, {t:0.16, w:0.86},
     {t:0.20, w:0.92}, {t:0.26, w:0.96}, {t:0.32, w:0.99}, {t:0.40, w:1.00},
-    {t:0.50, w:1.00}, {t:0.58, w:0.99}, {t:0.65, w:0.96}, {t:0.72, w:0.92},
-    {t:0.78, w:0.87}, {t:0.83, w:0.82}, {t:0.88, w:0.75}, {t:0.92, w:0.66},
-    {t:0.95, w:0.56}, {t:0.98, w:0.46}, {t:1.000, w:0.38},
+    {t:0.50, w:1.00}, {t:0.58, w:0.99}, {t:0.65, w:0.98}, {t:0.72, w:0.96},
+    {t:0.78, w:0.93}, {t:0.82, w:0.90}, {t:0.86, w:0.86}, {t:0.90, w:0.80},
+    {t:0.93, w:0.72}, {t:0.96, w:0.58}, {t:0.98, w:0.42}, {t:1.000, w:0.30},
   ],
   performanceShortboard: [
     {t:0.000, w:0.02}, {t:0.015, w:0.06}, {t:0.03, w:0.14}, {t:0.05, w:0.24},
@@ -74,7 +77,9 @@ const REFERENCE_OUTLINES = {
   ],
 };
 
-function lerpRefCurve(curve, t) {
+export { REFERENCE_OUTLINES };
+
+export function lerpRefCurve(curve, t) {
   if (t <= curve[0].t) return curve[0].w;
   if (t >= curve[curve.length - 1].t) return curve[curve.length - 1].w;
   for (let i = 0; i < curve.length - 1; i++) {
@@ -99,20 +104,371 @@ function smoothArray(arr, passes) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// OUTLINE
+// NOSE SHAPE MODIFIERS — affect the first ~10% of outline
 // ═══════════════════════════════════════════════════════════════════════════════
+const NOSE_SHAPES = {
+  // tipWidth = fraction of nose width at tip (0 = point, higher = wider)
+  // curveExp = how the width builds from tip (lower = gradual/smooth, higher = abrupt)
+
+  round: {
+    tipWidth: 0.12,   // wide, smooth semi-circular tip
+    curveExp: 1.5,    // gradual curve for stability
+  },
+  pointedRound: {
+    tipWidth: 0.06,   // slightly tapered front end
+    curveExp: 1.8,    // balanced curve
+  },
+  pointed: {
+    tipWidth: 0.02,   // sleek, streamlined tip
+    curveExp: 2.4,    // sharper taper for precision
+  },
+  asymmetrical: {
+    tipWidth: 0.05,
+    curveExp: 2.0,
+    asymm: true,
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TAIL SHAPE CURVES — bezier-style control points for each tail type
+// Each shape is an array of {x, w} where:
+//   x = inches from tail tip (0 = tip, 12 = reference station)
+//   w = width as fraction of 12" station width (0 = centerline, 1 = full width)
+// Points are interpolated with smooth curves to create the outline
+// ═══════════════════════════════════════════════════════════════════════════════
+const TAIL_CURVES = {
+  // Pin: smooth taper to narrow point over last 8-12"
+  // Tip is 0.5-1" wide (at 15" tail width = ~0.03-0.07 fraction)
+  // For true pin: near-point. For rounded pin: slight 0.5" radius at very tip
+  pin: [
+    { x: 0, w: 0.04 },   // very narrow tip (~0.6" at 15" tail)
+    { x: 0.5, w: 0.08 }, // slight rounding
+    { x: 1, w: 0.14 },   // still narrow
+    { x: 2, w: 0.28 },   // building out
+    { x: 3, w: 0.42 },   // smooth taper
+    { x: 5, w: 0.62 },
+    { x: 8, w: 0.82 },
+    { x: 12, w: 1.00 },
+  ],
+
+  // Round: smooth egg-shaped end, 3-4" wide at tip with 1.5-2" radius
+  // NO flat face — rails curve together and meet smoothly
+  round: [
+    { x: 0, w: 0.22 },   // rounded tip (~3.3" at 15" tail)
+    { x: 0.5, w: 0.32 }, // quick curve out
+    { x: 1, w: 0.42 },
+    { x: 2, w: 0.58 },
+    { x: 3, w: 0.70 },
+    { x: 5, w: 0.84 },
+    { x: 8, w: 0.94 },
+    { x: 12, w: 1.00 },
+  ],
+
+  // Round pin: most common all-rounder, between round and pin
+  // Tip is 2-3" wide with ~1" radius
+  roundPin: [
+    { x: 0, w: 0.15 },   // rounded narrow tip (~2.25" at 15" tail)
+    { x: 0.5, w: 0.22 },
+    { x: 1, w: 0.30 },
+    { x: 2, w: 0.45 },
+    { x: 3, w: 0.58 },
+    { x: 5, w: 0.75 },
+    { x: 8, w: 0.90 },
+    { x: 12, w: 1.00 },
+  ],
+
+  // Squash: most common tail. Maintains width until last 1-2", flat end with 1-1.5" corner radius
+  // The end is perpendicular to stringer with rounded corners
+  squash: [
+    { x: 0, w: 0.82 },   // wide flat back (~12.3" at 15" tail)
+    { x: 0.3, w: 0.84 }, // corner radius starts
+    { x: 0.7, w: 0.87 }, // corner rounding
+    { x: 1, w: 0.90 },   // corner transition complete
+    { x: 1.5, w: 0.93 },
+    { x: 2, w: 0.95 },
+    { x: 3, w: 0.97 },
+    { x: 6, w: 0.99 },
+    { x: 12, w: 1.00 },
+  ],
+
+  // Square: very wide, minimal corner rounding
+  square: [
+    { x: 0, w: 0.90 },   // almost full width
+    { x: 0.2, w: 0.91 }, // tiny corner
+    { x: 0.5, w: 0.93 },
+    { x: 1, w: 0.95 },
+    { x: 2, w: 0.97 },
+    { x: 6, w: 0.99 },
+    { x: 12, w: 1.00 },
+  ],
+
+  // Rounded square: between squash and square
+  roundedSquare: [
+    { x: 0, w: 0.85 },
+    { x: 0.3, w: 0.87 },
+    { x: 0.7, w: 0.90 },
+    { x: 1, w: 0.92 },
+    { x: 2, w: 0.95 },
+    { x: 3, w: 0.97 },
+    { x: 6, w: 0.99 },
+    { x: 12, w: 1.00 },
+  ],
+
+  // Swallow: wings with center notch (notch cut via CSG in 3D)
+  // Body maintains width from reference outline until wings start
+  // w values >1.0 mean "wider than tailWidth12" to preserve body width
+  // Wing tips are pinned narrow
+  swallow: [
+    { x: 0, w: 0.32 },   // pinned wing tip (~2.3" at 14.5" tail)
+    { x: 0.5, w: 0.48 }, // wing building
+    { x: 1, w: 0.62 },   // wing opening
+    { x: 1.5, w: 0.76 }, // mid-wing
+    { x: 2, w: 0.88 },   // upper wing
+    { x: 3, w: 1.05 },   // body zone - match/exceed body outline
+    { x: 6, w: 1.18 },   // parallel rails zone - stays wide
+    { x: 12, w: 1.30 },  // matches body outline width at 12"
+  ],
+
+  // Fish: classic twin-fin - parallel rails, pinned wing tips
+  // Fish boards maintain body width until the swallow wings
+  // w values >1.0 preserve body width relative to tailWidth12
+  fish: [
+    { x: 0, w: 0.30 },   // pinned wing tip (~2.2" at 14.5" tail)
+    { x: 0.5, w: 0.45 }, // wing building
+    { x: 1, w: 0.58 },   // wing opening
+    { x: 1.5, w: 0.72 }, // mid-wing
+    { x: 2, w: 0.85 },   // upper wing
+    { x: 3, w: 1.02 },   // body zone - match body outline
+    { x: 6, w: 1.16 },   // parallel rails - stays wide
+    { x: 12, w: 1.30 },  // matches body outline at 12" from tail
+  ],
+
+  // Diamond: angular taper to narrow point
+  diamond: [
+    { x: 0, w: 0.08 },   // narrow point
+    { x: 1, w: 0.30 },   // quick angle out
+    { x: 2, w: 0.50 },   // linear-ish
+    { x: 3, w: 0.65 },
+    { x: 6, w: 0.85 },
+    { x: 12, w: 1.00 },
+  ],
+
+  // Bat: bump out then taper
+  bat: [
+    { x: 0, w: 0.45 },   // narrower tip
+    { x: 1, w: 0.65 },   // building to wing
+    { x: 2, w: 0.85 },   // wing peak
+    { x: 2.5, w: 0.88 }, // wing holds
+    { x: 3, w: 0.86 },   // slight tuck after wing
+    { x: 6, w: 0.94 },
+    { x: 12, w: 1.00 },
+  ],
+
+  // Winged swallow: pinned tips with wing bumps before the swallow notch
+  // Wing bump creates a small protrusion then tucks back before the pins
+  wingedSwallow: [
+    { x: 0, w: 0.26 },   // pinned wing tip
+    { x: 0.5, w: 0.40 },
+    { x: 1, w: 0.55 },
+    { x: 1.5, w: 0.70 },
+    { x: 2, w: 0.88 },   // wing bump peak
+    { x: 2.5, w: 0.92 }, // wing holds
+    { x: 3, w: 0.95 },   // slight tuck after wing
+    { x: 6, w: 1.12 },   // body zone
+    { x: 12, w: 1.25 },  // matches body outline
+  ],
+
+  // Winged squash: wings before squash back
+  wingedSquash: [
+    { x: 0, w: 0.68 },
+    { x: 0.5, w: 0.72 },
+    { x: 1, w: 0.78 },
+    { x: 2, w: 0.90 },   // wing
+    { x: 2.5, w: 0.92 }, // wing peak
+    { x: 3, w: 0.90 },
+    { x: 6, w: 0.96 },
+    { x: 12, w: 1.00 },
+  ],
+
+  // Winged round: round with wing bumps
+  wingedRound: [
+    { x: 0, w: 0.20 },   // rounded tip
+    { x: 0.5, w: 0.30 },
+    { x: 1, w: 0.42 },
+    { x: 2, w: 0.70 },   // wing bump starts
+    { x: 2.5, w: 0.76 }, // wing peak
+    { x: 3, w: 0.74 },   // slight tuck
+    { x: 5, w: 0.86 },
+    { x: 8, w: 0.95 },
+    { x: 12, w: 1.00 },
+  ],
+
+  // Rounded diamond
+  roundedDiamond: [
+    { x: 0, w: 0.15 },
+    { x: 1, w: 0.38 },
+    { x: 2, w: 0.55 },
+    { x: 3, w: 0.70 },
+    { x: 6, w: 0.88 },
+    { x: 12, w: 1.00 },
+  ],
+};
+
+// Metadata for 3D surface generation
+const TAIL_SHAPES = {
+  pin:           { notch: false, wide: false, cornerRadius: 1.0 },
+  round:         { notch: false, wide: false, cornerRadius: 1.0 },
+  roundPin:      { notch: false, wide: false, cornerRadius: 1.0 },
+  square:        { notch: false, wide: true,  cornerRadius: 0.1 },
+  squash:        { notch: false, wide: true,  cornerRadius: 0.5 },
+  roundedSquare: { notch: false, wide: true,  cornerRadius: 0.3 },
+  swallow:       { notch: true,  wide: false, cornerRadius: 0.8 },
+  fish:          { notch: true,  wide: false, cornerRadius: 0.9 },
+  diamond:       { notch: false, wide: false, cornerRadius: 0.0 },
+  bat:           { notch: false, wide: false, cornerRadius: 0.2 },
+  wingedSwallow: { notch: true,  wide: false, cornerRadius: 0.7 },
+  wingedSquash:  { notch: false, wide: true,  cornerRadius: 0.4 },
+  wingedRound:   { notch: false, wide: false, cornerRadius: 1.0 },
+  roundedDiamond:{ notch: false, wide: false, cornerRadius: 0.5 },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// OUTLINE — Station-based width control (like Shape3D)
+// Uses width values at 0, 1, 3, 6, 12, 18, 24" from nose and tail
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Interpolate through station control points using Catmull-Rom
+function stationSpline(stations, x) {
+  // stations = [{x, w}, ...] sorted by x
+  if (stations.length === 0) return 0;
+  if (stations.length === 1) return stations[0].w;
+  if (x <= stations[0].x) return stations[0].w;
+  if (x >= stations[stations.length - 1].x) return stations[stations.length - 1].w;
+
+  // Find segment
+  let seg = 0;
+  for (let i = 0; i < stations.length - 1; i++) {
+    if (x >= stations[i].x && x <= stations[i + 1].x) {
+      seg = i;
+      break;
+    }
+  }
+
+  const x0 = stations[seg].x;
+  const x1 = stations[seg + 1].x;
+  const t = (x - x0) / (x1 - x0);
+
+  // Catmull-Rom spline
+  const p0 = stations[Math.max(0, seg - 1)].w;
+  const p1 = stations[seg].w;
+  const p2 = stations[seg + 1].w;
+  const p3 = stations[Math.min(stations.length - 1, seg + 2)].w;
+
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return 0.5 * (
+    2 * p1 +
+    (-p0 + p2) * t +
+    (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
+    (-p0 + 3 * p1 - 3 * p2 + p3) * t3
+  );
+}
+
 export function generateOutline(params) {
-  const { lengthIn: L, widePointWidthIn, boardType = 'midLength' } = params;
-  const halfWide = widePointWidthIn / 2;
+  const {
+    lengthIn: L,
+    widePointWidthIn,
+    widePointIn,
+    noseShape = 'round',
+    tailShape = 'squash',
+    boardType = 'midLength'
+  } = params;
+
+  const halfMaxWidth = widePointWidthIn / 2;
   const curve = REFERENCE_OUTLINES[boardType] || REFERENCE_OUTLINES.midLength;
+  const noseConfig = NOSE_SHAPES[noseShape] || NOSE_SHAPES.round;
+  const tailCurve = TAIL_CURVES[tailShape] || TAIL_CURVES.squash;
+  const widePoint = widePointIn || L * 0.5;
+
+  // Station positions from nose/tail
+  const STATIONS = [1, 3, 6, 12, 18, 24];
+
+  // Build nose station control points
+  // Default widths use reference curve if not specified
+  const noseStations = STATIONS.map(s => {
+    const key = `noseWidth${s}`;
+    const refW = lerpRefCurve(curve, s / L) * widePointWidthIn;
+    const w = params[key] !== undefined ? params[key] : refW;
+    return { x: s, w: w / 2 }; // half-width
+  });
+
+  // Build tail station control points (only for stations beyond tail curve zone)
+  const tailStations = STATIONS.filter(s => s > 12).map(s => {
+    const key = `tailWidth${s}`;
+    const refW = lerpRefCurve(curve, (L - s) / L) * widePointWidthIn;
+    const w = params[key] !== undefined ? params[key] : refW;
+    return { x: L - s, w: w / 2 }; // half-width
+  }).reverse(); // sort by x ascending
+
+  // Get tail width at 12" (the primary tail width param) - this scales the tail curve
+  const tailWidth12 = params.tailWidthIn !== undefined ? params.tailWidthIn / 2 :
+    lerpRefCurve(curve, (L - 12) / L) * halfMaxWidth;
+
+  // Add tip points and wide point (tail tip now comes from curve)
+  const tailTipWidth = tailCurve[0].w * tailWidth12;
+  const allStations = [
+    { x: 0, w: halfMaxWidth * noseConfig.tipWidth * 0.5 }, // nose tip
+    ...noseStations,
+    { x: widePoint, w: halfMaxWidth }, // wide point
+    ...tailStations,
+    { x: L, w: tailTipWidth }, // tail tip from curve definition
+  ].sort((a, b) => a.x - b.x);
+
+  // Remove duplicates (keep first)
+  const uniqueStations = [];
+  for (const s of allStations) {
+    if (uniqueStations.length === 0 || Math.abs(s.x - uniqueStations[uniqueStations.length - 1].x) > 0.5) {
+      uniqueStations.push(s);
+    }
+  }
 
   const SAMPLES = 200;
   let widths = [];
+
   for (let i = 0; i <= SAMPLES; i++) {
-    widths.push(lerpRefCurve(curve, i / SAMPLES) * halfWide);
+    const xIn = (i / SAMPLES) * L;
+    let hw = stationSpline(uniqueStations, xIn);
+
+    // ── NOSE TIP (first 2") — apply nose shape curve ──────────────────────
+    if (xIn < 2) {
+      const tipProgress = xIn / 2;
+      const hw2 = stationSpline(uniqueStations, 2);
+      const hwTip = hw2 * noseConfig.tipWidth;
+      hw = hwTip + (hw2 - hwTip) * Math.pow(tipProgress, noseConfig.curveExp);
+    }
+
+    // ── TAIL (last 12") — use tail curve definition ───────────────────────
+    const xFromTail = L - xIn;
+    if (xFromTail <= 12) {
+      // Interpolate the tail curve at this position
+      const tailHW = stationSpline(tailCurve, xFromTail) * tailWidth12;
+
+      // Blend from body outline to tail curve between 12" and 8" from tail
+      if (xFromTail > 8) {
+        const blendT = (xFromTail - 8) / 4; // 0 at 8", 1 at 12"
+        hw = tailHW + (hw - tailHW) * blendT;
+      } else {
+        // Full tail curve control in last 8"
+        hw = tailHW;
+      }
+    }
+
+    widths.push(Math.max(0, hw));
   }
+
+  // Smooth and clamp
   widths = smoothArray(widths, 2);
-  widths = widths.map(w => Math.min(Math.max(0, w), halfWide));
+  widths = widths.map(w => Math.min(Math.max(0, w), halfMaxWidth));
 
   const pts = [];
   for (let i = 0; i <= SAMPLES; i++) {
@@ -122,23 +478,70 @@ export function generateOutline(params) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ROCKER — power curve: flat center, smooth acceleration to tips
+// ROCKER — continuous or staged curve with flip/kick points
 // ═══════════════════════════════════════════════════════════════════════════════
 export function generateRocker(params) {
-  const { lengthIn: L, noseRockerIn, tailRockerIn, entryRocker, exitRocker } = params;
-  const noseExp = { flat: 3.5, moderate: 2.8, aggressive: 2.2 }[entryRocker] ?? 3.0;
-  const tailExp = { flat: 3.5, moderate: 2.8, aggressive: 2.2 }[exitRocker]  ?? 3.0;
+  const { lengthIn: L, noseRockerIn, tailRockerIn, entryRocker, exitRocker, rockerType } = params;
   const SAMPLES = 200;
   const mid = L / 2;
   const pts = [];
+
+  // Entry/exit curve affects flip/kick point position (as fraction of half-length)
+  // Flat = flip/kick starts later (closer to tip), Aggressive = starts earlier (more of the board curves)
+  const noseFlipFrac = { flat: 0.35, moderate: 0.50, aggressive: 0.65 }[entryRocker] ?? 0.50;
+  const tailKickFrac = { flat: 0.35, moderate: 0.50, aggressive: 0.65 }[exitRocker] ?? 0.50;
+
+  // Curve exponent - how sharply the rocker accelerates
+  const noseExp = { flat: 2.8, moderate: 2.2, aggressive: 1.8 }[entryRocker] ?? 2.2;
+  const tailExp = { flat: 2.8, moderate: 2.2, aggressive: 1.8 }[exitRocker] ?? 2.2;
+
+  const isStaged = rockerType === 'staged';
+
   for (let i = 0; i <= SAMPLES; i++) {
     const x = (i / SAMPLES) * L;
-    let z;
-    if (x <= mid) {
-      z = noseRockerIn * Math.pow((mid - x) / mid, noseExp);
+    let z = 0;
+
+    if (isStaged) {
+      // Staged rocker: flat middle, accelerated flip at nose, kick at tail
+      const noseFlipStart = mid * (1 - noseFlipFrac); // where flip begins (from nose)
+      const tailKickStart = mid + (mid * (1 - tailKickFrac)); // where kick begins (from nose)
+
+      if (x < noseFlipStart) {
+        // Nose flip zone - accelerated curve
+        const t = (noseFlipStart - x) / noseFlipStart;
+        z = noseRockerIn * Math.pow(t, noseExp);
+      } else if (x > tailKickStart) {
+        // Tail kick zone - accelerated curve
+        const t = (x - tailKickStart) / (L - tailKickStart);
+        z = tailRockerIn * Math.pow(t, tailExp);
+      }
+      // else: flat middle section, z stays 0
     } else {
-      z = tailRockerIn * Math.pow((x - mid) / (L - mid), tailExp);
+      // Continuous rocker: smooth curve throughout
+      // Flip/kick fractions affect where the curve is steepest
+      if (x <= mid) {
+        const t = (mid - x) / mid;
+        // Blend between flat center and curved nose based on flip fraction
+        const blendStart = 1 - noseFlipFrac;
+        if (t > blendStart) {
+          const localT = (t - blendStart) / noseFlipFrac;
+          z = noseRockerIn * Math.pow(localT, noseExp);
+        } else {
+          // Gentle curve in the "flatter" zone
+          z = noseRockerIn * Math.pow(t, noseExp + 1.5) * 0.3;
+        }
+      } else {
+        const t = (x - mid) / (L - mid);
+        const blendStart = 1 - tailKickFrac;
+        if (t > blendStart) {
+          const localT = (t - blendStart) / tailKickFrac;
+          z = tailRockerIn * Math.pow(localT, tailExp);
+        } else {
+          z = tailRockerIn * Math.pow(t, tailExp + 1.5) * 0.3;
+        }
+      }
     }
+
     pts.push({ x, z });
   }
   return pts;
@@ -256,12 +659,13 @@ export function generateSurfboardGeometry(params) {
   }
 
   // ── Tail shape flags — needed before tValues to control station count ──
-  const isSwallowFish = (tailShape === 'swallow' || tailShape === 'fish');
-  const isSquash = (tailShape === 'squash');
+  const tailMeta = TAIL_SHAPES[tailShape] || { notch: false, wide: false };
+  const isNotchedTail = tailMeta.notch;
+  const isWideTail = tailMeta.wide;
 
   // ── Station t values — dense near tips, sparse in middle ───────────────
-  // swallow/fish: extra station at 0.995 confines notch blend to last ~0.33"
-  const tValues = isSwallowFish
+  // notched tails: extra station at 0.995 confines notch blend to last ~0.33"
+  const tValues = isNotchedTail
     ? [0.0, 0.01, 0.03, 0.06, 0.10, 0.18, 0.28, 0.40, 0.50, 0.60, 0.72, 0.82, 0.90, 0.94, 0.97, 0.99, 0.995, 1.0]
     : [0.0, 0.01, 0.03, 0.06, 0.10, 0.18, 0.28, 0.40, 0.50, 0.60, 0.72, 0.82, 0.90, 0.94, 0.97, 0.99, 1.0];
 
@@ -331,7 +735,7 @@ export function generateSurfboardGeometry(params) {
     const domeH = inchesToMeters(0.06);
     // taper thickness to paper-thin at tips (skip for wide tails)
     const tipTaper = t < 0.05 ? t / 0.05
-                   : (t > 0.95 && !isSwallowFish && !isSquash) ? (1 - t) / 0.05
+                   : (t > 0.95 && !isNotchedTail && !isWideTail) ? (1 - t) / 0.05
                    : 1.0;
     const effThM = thM * Math.pow(tipTaper, 0.7);
     const rail  = blendRail(t);
@@ -346,36 +750,42 @@ export function generateSurfboardGeometry(params) {
       const tipY = rYM + effThM * 0.4;
       row = Array.from({ length: 13 }, () => new THREE.Vector4(xM, tipY, 0, 1));
 
-    } else if (isTailTip && !isSwallowFish && !isSquash) {
-      // pin/round/diamond — all points converge to clean point
+    } else if (isTailTip && !isWideTail) {
+      // pin/round/diamond/swallow — all converge to clean rounded closure
+      // For swallow/fish, the notch will be CUT via CSG after mesh generation
       const tipY = rYM + effThM * 0.4;
       row = Array.from({ length: 13 }, () => new THREE.Vector4(xM, tipY, 0, 1));
 
-    } else if (isTailTip && isSwallowFish) {
-      // swallow tail — center V-notch, wings at FULL tail outline width
-      const sd    = inchesToMeters(params.swallowDepthIn || 3.5);
-      const nxM   = xM - sd;           // notch tip (pulled back sd inches)
-      const wHW   = hwM;               // wings at full tail outline width
-      const midX  = xM - sd * 0.4;    // transition point x (40% of sd back from tail)
+    } else if (isTailTip && isWideTail) {
+      // squash/square tail — flat back edge with rounded or sharp corners
+      const tailConfig = TAIL_SHAPES[tailShape] || TAIL_SHAPES.squash;
+      const cornerR = tailConfig.cornerRadius ?? 0.6;
       const apexY = rYM + effThM * rail.apexFrac;
+
+      // Corner rounding: 1.0 = fully rounded (like a half-pipe), 0.0 = sharp square
+      // For squash, we want a blend - flat across most of the back, curves at corners
+      const flatFrac = 1 - cornerR; // how much of the width is flat
+      const flatHW = hwM * flatFrac * 0.7;
+
       row = [
-        new THREE.Vector4(nxM,   rYM,                              0,           1), // 0: notch bottom center
-        new THREE.Vector4(midX,  rYM,                              wHW * 0.4,   1), // 1: bottom transition R
-        new THREE.Vector4(xM,    rYM + effThM * rail.botCurve,     wHW * 0.85,  1), // 2: bottom rail R
-        new THREE.Vector4(xM,    apexY,                            wHW,          1), // 3: wing tip R
-        new THREE.Vector4(xM,    rYM + effThM * rail.deckRailFrac, wHW * 0.7,   1), // 4: deck rail R
-        new THREE.Vector4(midX,  rYM + effThM,                     wHW * 0.25,  1), // 5: deck shoulder R
-        new THREE.Vector4(nxM,   rYM + effThM + domeH,             0,           1), // 6: notch deck center
-        new THREE.Vector4(midX,  rYM + effThM,                    -wHW * 0.25,  1), // 7: deck shoulder L
-        new THREE.Vector4(xM,    rYM + effThM * rail.deckRailFrac,-wHW * 0.7,   1), // 8: deck rail L
-        new THREE.Vector4(xM,    apexY,                           -wHW,          1), // 9: wing tip L
-        new THREE.Vector4(xM,    rYM + effThM * rail.botCurve,    -wHW * 0.85,  1), // 10: bottom rail L
-        new THREE.Vector4(midX,  rYM,                             -wHW * 0.4,   1), // 11: bottom transition L
-        new THREE.Vector4(nxM,   rYM,                              0,           1), // 12: notch close
+        // bottom center to right corner
+        new THREE.Vector4(xM, rYM,                            0,            1), // 0: bottom center
+        new THREE.Vector4(xM, rYM,                            flatHW,       1), // 1: bottom flat R
+        new THREE.Vector4(xM, rYM + effThM * rail.botCurve * cornerR, hwM * 0.85, 1), // 2: corner curve R
+        new THREE.Vector4(xM, apexY,                          hwM,          1), // 3: rail apex R
+        new THREE.Vector4(xM, rYM + effThM * rail.deckRailFrac, hwM * 0.85, 1), // 4: deck corner R
+        new THREE.Vector4(xM, rYM + effThM,                   flatHW,       1), // 5: deck flat R
+        new THREE.Vector4(xM, rYM + effThM + domeH,           0,            1), // 6: deck center
+        new THREE.Vector4(xM, rYM + effThM,                  -flatHW,       1), // 7: deck flat L
+        new THREE.Vector4(xM, rYM + effThM * rail.deckRailFrac, -hwM * 0.85, 1), // 8: deck corner L
+        new THREE.Vector4(xM, apexY,                         -hwM,          1), // 9: rail apex L
+        new THREE.Vector4(xM, rYM + effThM * rail.botCurve * cornerR, -hwM * 0.85, 1), // 10: corner curve L
+        new THREE.Vector4(xM, rYM,                           -flatHW,       1), // 11: bottom flat L
+        new THREE.Vector4(xM, rYM,                            0,            1), // 12: close
       ];
 
     } else {
-      // normal cross-section (body stations + squash tail — stays blunt)
+      // normal cross-section (body stations)
       row = buildCrossSection(xM, hwM, rYM, effThM, domeH, rail);
     }
 

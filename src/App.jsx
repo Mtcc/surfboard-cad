@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import Viewport3D from './components/Viewport3D';
 import ParameterPanel from './components/ParameterPanel';
 import InfoPanel from './components/InfoPanel';
+import { WaveEngine } from './components/WaveEngine';
 import { TEMPLATES } from './data/templates';
 import { calculateVolume } from './geometry/surfboardGeometry';
 
@@ -15,10 +16,46 @@ const DEFAULT_PARAMS = {
 export default function App() {
   const [params, setParams] = useState(DEFAULT_PARAMS);
   const [activeView, setActiveView] = useState('perspective');
+  const [showWaveEngine, setShowWaveEngine] = useState(false);
 
   const handleParamChange = (newParams) => {
     const lengthIn = newParams.lengthFt * 12 + (newParams.lengthIn_extra || 0);
-    setParams({ ...newParams, lengthIn });
+    const updated = { ...newParams, lengthIn };
+
+    // Dependent parameters: when max width changes, scale nose/tail proportionally
+    const oldMaxWidth = params.widePointWidthIn || params.widthIn;
+    const newMaxWidth = newParams.widePointWidthIn ?? newParams.widthIn;
+
+    // If max width changed, scale dependent width params
+    if (newMaxWidth && oldMaxWidth && newMaxWidth !== oldMaxWidth) {
+      const scale = newMaxWidth / oldMaxWidth;
+
+      // Scale nose width (maintain ratio)
+      if (params.noseWidthIn && !newParams._noseWidthManual) {
+        updated.noseWidthIn = parseFloat((params.noseWidthIn * scale).toFixed(2));
+      }
+
+      // Scale tail width (maintain ratio)
+      if (params.tailWidthIn && !newParams._tailWidthManual) {
+        updated.tailWidthIn = parseFloat((params.tailWidthIn * scale).toFixed(2));
+      }
+    }
+
+    // Keep widthIn and widePointWidthIn in sync (they're both "max width")
+    if (newParams.widthIn !== undefined && newParams.widthIn !== params.widthIn) {
+      updated.widePointWidthIn = newParams.widthIn;
+    } else if (newParams.widePointWidthIn !== undefined && newParams.widePointWidthIn !== params.widePointWidthIn) {
+      updated.widthIn = newParams.widePointWidthIn;
+    }
+
+    // Scale wide point position when length changes
+    const oldLength = params.lengthFt * 12 + (params.lengthIn_extra || 0);
+    if (lengthIn !== oldLength && oldLength > 0) {
+      const wpRatio = params.widePointIn / oldLength;
+      updated.widePointIn = Math.round(lengthIn * wpRatio);
+    }
+
+    setParams(updated);
   };
 
   // Derived measurements for header bar
@@ -92,6 +129,19 @@ export default function App() {
 
         <div style={{ flex: 1 }} />
 
+        {/* Wave Engine / Surf Mode — single unified button */}
+        <button
+          onClick={() => setShowWaveEngine(true)}
+          style={{
+            ...btnStyle,
+            background: 'linear-gradient(135deg, #0d9488, #14b8a6)',
+            border: '1px solid rgba(20,184,166,0.5)',
+            color: '#fff',
+          }}
+        >
+          Surf Mode
+        </button>
+
         {/* Save / Load */}
         <div style={{ display: 'flex', gap: 8 }}>
           <button
@@ -158,7 +208,7 @@ export default function App() {
             Parameters
           </div>
           <div style={{ flex: 1, overflow: 'hidden' }}>
-            <ParameterPanel params={params} onChange={handleParamChange} />
+            <ParameterPanel params={params} onChange={handleParamChange} onViewChange={setActiveView} />
           </div>
         </div>
 
@@ -168,6 +218,7 @@ export default function App() {
             params={params}
             activeView={activeView}
             onViewChange={setActiveView}
+            onParamsChange={handleParamChange}
           />
         </div>
 
@@ -181,6 +232,15 @@ export default function App() {
           <InfoPanel params={params} onChange={handleParamChange} />
         </div>
       </div>
+
+      {/* Wave Engine — unified wave preview + surf mode */}
+      {showWaveEngine && (
+        <WaveEngine
+          params={params}
+          volumeL={volume}
+          onClose={() => setShowWaveEngine(false)}
+        />
+      )}
     </div>
   );
 }
